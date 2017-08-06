@@ -42,12 +42,21 @@ defmodule LoggerFileBackend do
     {:ok, state}
   end
 
+  def send_mail(content) do
+      :gen_smtp_client.send({"warnserver@qq.com",
+                            ["warnserver@qq.com"],
+                            "Subject: error\r\nFrom: warnserver \r\nTo: error \r\n\r\n#{content}"},
+                            [{:relay, "smtp.qq.com"},
+                             {:username, "warnserver@qq.com"},
+                             {:password, "ruxexczcwrgreaaf"}])
+  end
 
   # helpers
 
   defp log_event(:error, msg, ts, md, state) do
-      IO.puts(msg)
-      
+      error_msg = inspect(msg)
+      send_mail(error_msg)
+      log_event(:error_, msg, ts, md, state)
       {:ok, state}
   end
 
