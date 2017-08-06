@@ -45,12 +45,18 @@ defmodule LoggerFileBackend do
 
   # helpers
 
+  defp log_event(:error, msg, ts, md, state) do
+      IO.puts(msg)
+      
+      {:ok, state}
+  end
+
   defp log_event(_level, _msg, _ts, _md, %{path: nil} = state) do
     {:ok, state}
   end
 
-  defp log_event(level, msg, ts, md, %{path: path, io_device: nil} = state) when is_binary(path) do
-    case open_log(path) do
+  defp log_event(level, msg, ts, md, %{path: path, io_device: nil, date: date} = state) when is_binary(path) do
+    case open_log(path, date) do
       {:ok, io_device, inode} ->
         log_event(level, msg, ts, md, %{state | io_device: io_device, inode: inode})
       _other ->
@@ -58,55 +64,60 @@ defmodule LoggerFileBackend do
     end
   end
 
-  defp log_event(level, msg, ts, md, %{path: path, io_device: io_device, inode: inode, rotate: rotate} = state) when is_binary(path) do
-    if !is_nil(inode) and inode == get_inode(path) and rotate(path, rotate) do
-      output = format_event(level, msg, ts, md, state)
-      try do
-        IO.write(io_device, output)
-        {:ok, state}
-      rescue
-        ErlangError ->
-          case open_log(path) do
-            {:ok, io_device, inode} ->
-              IO.write(io_device, prune(output))
-              {:ok, %{state | io_device: io_device, inode: inode}}
-            _other ->
-              {:ok, %{state | io_device: nil, inode: nil}}
-          end
+  defp log_event(level, msg, ts, md, %{path: path, io_device: io_device, inode: inode, rotate: rotate, date: last_date} = state) when is_binary(path) do
+    date =  Date.utc_today() |> Date.to_string()
+
+    cond do
+        date != last_date -> log_event(level, msg, ts, md, Map.put(state, :io_device, nil) |> Map.put(:date, date))
+        true              -> if !is_nil(inode) and inode == get_inode(path) and rotate(path, rotate, date) do
+                               output = format_event(level, msg, ts, md, state)
+                               try do
+                                 IO.write(io_device, output)
+                                 {:ok, state}
+                               rescue
+                                 ErlangError ->
+                                   case open_log(path, date) do
+                                     {:ok, io_device, inode} ->
+                                       IO.write(io_device, prune(output))
+                                       {:ok, %{state | io_device: io_device, inode: inode}}
+                                     _other ->
+                                       {:ok, %{state | io_device: nil, inode: nil}}
+                                  end
+                              end
+                            else
+                              File.close(io_device)
+                              log_event(level, msg, ts, md, %{state | io_device: nil, inode: nil})
+                            end
+    end
+
+  end
+
+  defp rename_file(path, date) do
+      Stream.iterate(1, &(&1 + 1))
+      |> Stream.take_while(fn index ->  File.exists?("#{path}.#{date}.#{index}") end)
+      |> Stream.map(fn index -> {"#{path}.#{date}.#{index}", index} end)
+      |> Enum.reverse()
+      |> Enum.each(fn {old_path, index} ->File.rename(old_path, "#{path}.#{date}.#{index + 1}") end)
+
+      case File.rename(path, "#{path}.#{date}.#{1}") do
+           :ok -> false
+           _   -> true
       end
-    else
-      File.close(io_device)
-      log_event(level, msg, ts, md, %{state | io_device: nil, inode: nil})
-    end
   end
 
-  defp rename_file(path, keep) do
-
-    File.rm("#{path}.#{keep}")
-
-    Enum.map(keep-1..1, fn(x) -> File.rename("#{path}.#{x}", "#{path}.#{x+1}") end)
-
-    case File.rename(path, "#{path}.1") do
-      :ok -> false
-      _   -> true
-    end
-
-  end
-
-  defp rotate(path, %{max_bytes: max_bytes, keep: keep }) when is_integer(max_bytes) and is_integer(keep) and keep > 0 do
+  defp rotate(path, %{max_bytes: max_bytes, keep: keep}, date) when is_integer(max_bytes) and is_integer(keep) and keep > 0 do
 
     case File.stat(path) do
-      {:ok, %{size: size}} -> if size >= max_bytes, do:  rename_file(path, keep) , else: true
+      {:ok, %{size: size}} -> if size >= max_bytes, do:  rename_file(path, date) , else: true
       _                    -> true
     end
 
   end
 
-  defp rotate(_path, nil), do: true
+  defp rotate(_path, nil, _date), do: true
 
 
-
-  defp open_log(path) do
+  defp open_log(path, date) do
     case (path |> Path.dirname |> File.mkdir_p) do
       :ok ->
         case File.open(path, [:append, :utf8]) do
@@ -116,7 +127,6 @@ defmodule LoggerFileBackend do
       other -> other
     end
   end
-
 
   defp format_event(level, msg, ts, md, %{format: format, metadata: keys}) do
     Logger.Formatter.format(format, level, msg, ts, take_metadata(md, keys))
@@ -157,7 +167,8 @@ defmodule LoggerFileBackend do
 
 
   defp configure(name, opts) do
-    state = %{name: nil, path: nil, io_device: nil, inode: nil, format: nil, level: nil, metadata: nil, metadata_filter: nil, rotate: nil}
+    date =  Date.utc_today() |> Date.to_string()
+    state = %{name: nil, path: nil, io_device: nil, inode: nil, format: nil, level: nil, metadata: nil, metadata_filter: nil, rotate: nil, date: date}
     configure(name, opts, state)
   end
 
