@@ -43,12 +43,19 @@ defmodule LoggerFileBackend do
   end
 
   def send_mail(content) do
-      :gen_smtp_client.send({"warnserver@qq.com",
-                            ["warnserver@qq.com"],
+      opts = Application.get_env(:server, :mail)
+      from = Keyword.get(opts, :from)
+      to   = Keyword.get(opts, :to)
+      un   = Keyword.get(opts, :username)
+      pw   = Keyword.get(opts, :password)
+      sw   = Keyword.get(opts, :server)
+
+      :gen_smtp_client.send({from,
+                            [to],
                             "Subject: error\r\nFrom: warnserver \r\nTo: error \r\n\r\n#{content}"},
-                            [{:relay, "smtp.qq.com"},
-                             {:username, "warnserver@qq.com"},
-                             {:password, "ruxexczcwrgreaaf"}])
+                            [{:relay, sw},
+                             {:username, un},
+                             {:password, pw}])
   end
 
   # helpers
