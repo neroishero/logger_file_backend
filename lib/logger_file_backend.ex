@@ -4,6 +4,8 @@ defmodule LoggerFileBackend do
 
   use GenEvent
 
+  require Logger
+
   @type path      :: String.t
   @type file      :: :file.io_device
   @type inode     :: File.Stat.t
@@ -50,12 +52,14 @@ defmodule LoggerFileBackend do
       pw   = Keyword.get(opts, :password)
       sw   = Keyword.get(opts, :server)
 
+      send_result =
       :gen_smtp_client.send({from,
                             [to],
                             "Subject: error\r\nFrom: warnserver \r\nTo: error \r\n\r\n#{content}"},
                             [{:relay, sw},
                              {:username, un},
                              {:password, pw}])
+     Logger.info("------------ send mail result:#{inspect(send_result)}")
   end
 
   # helpers
